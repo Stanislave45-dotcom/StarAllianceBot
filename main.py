@@ -17,7 +17,8 @@ async def alliance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛡 Clan 3: #J9QVU9J8"
     )
 
-app = Application.builder().token("8961688347:AAEJSdxvWNMulmmth7cbQTX-k-65zBQB1ug").build()
+app = Application.builder().token("8961688347:AAEE5EAj5iV6ZE3Ra7GW
+i_8Wu8rzuBRZQBw").build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("alliance", alliance))
