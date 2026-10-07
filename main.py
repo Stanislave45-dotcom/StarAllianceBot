@@ -20,11 +20,11 @@ async def chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🆔 ID-ul acestui chat este:\n{update.effective_chat.id}"
     )
-app.add_handler(CommandHandler("id", chat_id))
+
 app = Application.builder().token("8961688347:AAE2T3Rg_QK5kKEMEPShObq4hzytg-1sOp4").build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("alliance", alliance))
-
+app.add_handler(CommandHandler("id", chat_id))
 app.run_polling()
 
