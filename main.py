@@ -34,29 +34,29 @@ async def alliance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         """🏆 STAR ALLIANCE
 
-🛡 Clan 1
+🛡 StarAlliance MD
 #GC002L02
 
-🛡 Clan 2
+🛡 StarAcademy MD
 #GRC9VUG8
 
-🛡 Clan 3
+🛡 StarAlliance AX
 #J9QVU9J8"""
     )
 
 async def clan1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🛡 Clan 1\nTag: #GC002L02"
+        "🛡 StarAllianc MD\nTag: #GC002L02"
     )
 
 async def clan2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🛡 Clan 2\nTag: #GRC9VUG8"
+        "🛡 StarAcademy MD\nTag: #GRC9VUG8"
     )
 
 async def clan3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🛡 Clan 3\nTag: #J9QVU9J8"
+        "🛡 StarAlliance AX\nTag: #J9QVU9J8"
     )
 async def clan1(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
