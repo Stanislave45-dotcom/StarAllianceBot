@@ -1,9 +1,13 @@
 import os
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
+CR_API_KEY = os.getenv("CLASH_ROYALE_API_KEY")
+headers = {
+    "Authorization": f"Bearer {CR_API_KEY}"
+}
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = """
 🏆 Bine ai venit la Star Alliance Bot!
@@ -54,6 +58,29 @@ async def clan3(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🛡 Clan 3\nTag: #J9QVU9J8"
     )
+async def clan1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    tag = "%23GC002L02"
+
+    response = requests.get(
+        f"https://api.clashroyale.com/v1/clans/{tag}",
+        headers=headers
+    )
+
+    if response.status_code != 200:
+        await update.message.reply_text("❌ Eroare API")
+        return
+
+    clan = response.json()
+
+    text = (
+        f"🏆 {clan['name']}\n\n"
+        f"👥 Membri: {clan['members']}/50\n"
+        f"🏅 Trofee: {clan['clanScore']}\n"
+        f"📈 Necesar: {clan['requiredTrophies']}"
+    )
+
+    await update.message.reply_text(text)
 
 app = Application.builder().token(BOT_TOKEN).build()
 
@@ -63,6 +90,7 @@ app.add_handler(CommandHandler("alliance", alliance))
 app.add_handler(CommandHandler("clan1", clan1))
 app.add_handler(CommandHandler("clan2", clan2))
 app.add_handler(CommandHandler("clan3", clan3))
+app.add_handler(CommandHandler("clan1", clan1))
 
 print("Star Alliance Bot este online!")
 
