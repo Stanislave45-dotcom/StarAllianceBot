@@ -67,9 +67,13 @@ async def clan1(update: Update, context: ContextTypes.DEFAULT_TYPE):
         headers=headers
     )
 
-    if response.status_code != 200:
-        await update.message.reply_text("❌ Eroare API")
-        return
+if response.status_code != 200:
+    await update.message.reply_text(
+        f"❌ API Error\n"
+        f"Status: {response.status_code}\n"
+        f"Răspuns: {response.text}"
+    )
+    return
 
     clan = response.json()
 
