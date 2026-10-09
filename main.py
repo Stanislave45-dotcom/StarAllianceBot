@@ -24,10 +24,11 @@ CR_API_TOKEN = os.getenv("CR_API_TOKEN")
 MOLDOVA_LOCATION_ID = 57000155
 API_BASE = "https://proxy.royaleapi.dev/v1"
 
-# Verificare la fiecare 60 de secunde
+# O nouă verificare începe la 60 de secunde
+# după terminarea scanării precedente.
 CHECK_INTERVAL = 60
 
-# Alerte numai pentru jucători cu peste 9000
+# Notificări numai pentru 9001+ trofee.
 MIN_TROPHIES = 9000
 
 STATE_FILE = "players.json"
@@ -62,11 +63,21 @@ def send_telegram(message):
         print(
             "Telegram:",
             response.status_code,
-            response.text[:300]
+            response.text[:500]
         )
+
+        if response.status_code != 200:
+            print(
+                "Telegram a respins notificarea:",
+                response.text
+            )
+            return False
+
+        return True
 
     except requests.RequestException as error:
         print("Eroare Telegram:", error)
+        return False
 
 
 # =====================================
@@ -157,10 +168,12 @@ def scan_players():
 
     for clan in clans:
         clan_tag = clan.get("tag")
+
         clan_name = clan.get(
             "name",
             "Clan necunoscut"
         )
+
         clan_rank = clan.get("rank", 0)
 
         if not clan_tag:
@@ -199,14 +212,15 @@ def scan_players():
                 "clan_rank": clan_rank
             }
 
-        # Pauză mică între solicitări
+        # Pauză mică între cererile API.
         time.sleep(0.10)
 
     print("Jucători găsiți:", len(current_players))
     print("Clanuri cu eroare:", failed_clans)
 
-    # Nu comparăm dacă scanarea este incompletă.
-    # Astfel evităm notificările false.
+    # Dacă un clan nu poate fi citit,
+    # comparația este anulată pentru a evita
+    # notificările false de ieșire.
     if failed_clans > 0:
         print(
             "Scanarea este incompletă. "
@@ -248,8 +262,10 @@ def load_previous_players():
 
 def save_players(players):
     try:
+        temporary_file = f"{STATE_FILE}.tmp"
+
         with open(
-            STATE_FILE,
+            temporary_file,
             "w",
             encoding="utf-8"
         ) as file:
@@ -259,6 +275,11 @@ def save_players(players):
                 ensure_ascii=False,
                 indent=2
             )
+
+        os.replace(
+            temporary_file,
+            STATE_FILE
+        )
 
         print("Starea a fost salvată.")
 
@@ -272,7 +293,7 @@ def save_players(players):
 
 def get_profile_url(player_tag):
     tag_without_hash = (
-        player_tag
+        str(player_tag)
         .replace("#", "")
         .upper()
     )
@@ -289,10 +310,12 @@ def get_profile_url(player_tag):
 
 def player_line(player):
     player_name = html.escape(
-        str(player.get(
-            "name",
-            "Jucător necunoscut"
-        ))
+        str(
+            player.get(
+                "name",
+                "Jucător necunoscut"
+            )
+        )
     )
 
     player_tag = str(
@@ -300,7 +323,12 @@ def player_line(player):
     )
 
     safe_tag = html.escape(player_tag)
-    profile_url = get_profile_url(player_tag)
+
+    profile_url = html.escape(
+        get_profile_url(player_tag),
+        quote=True
+    )
+
     trophies = player.get("trophies", 0)
 
     return (
@@ -316,9 +344,15 @@ def player_line(player):
 # =====================================
 
 def has_enough_trophies(player):
-    trophies = player.get("trophies", 0)
+    try:
+        trophies = int(
+            player.get("trophies", 0)
+        )
 
-    # Numai peste 9000, deci 9001+
+    except (TypeError, ValueError):
+        trophies = 0
+
+    # Peste 9000 înseamnă 9001 sau mai mult.
     return trophies > MIN_TROPHIES
 
 
@@ -333,20 +367,24 @@ def notify_transfer(old_player, new_player):
             new_player.get("name"),
             new_player.get("trophies")
         )
-        return
+        return False
 
     old_clan = html.escape(
-        str(old_player.get(
-            "clan_name",
-            "Clan necunoscut"
-        ))
+        str(
+            old_player.get(
+                "clan_name",
+                "Clan necunoscut"
+            )
+        )
     )
 
     new_clan = html.escape(
-        str(new_player.get(
-            "clan_name",
-            "Clan necunoscut"
-        ))
+        str(
+            new_player.get(
+                "clan_name",
+                "Clan necunoscut"
+            )
+        )
     )
 
     old_rank = old_player.get("clan_rank", 0)
@@ -361,7 +399,7 @@ def notify_transfer(old_player, new_player):
         f"(#{new_rank})"
     )
 
-    send_telegram(message)
+    return send_telegram(message)
 
 
 # =====================================
@@ -375,13 +413,15 @@ def notify_join(player):
             player.get("name"),
             player.get("trophies")
         )
-        return
+        return False
 
     clan_name = html.escape(
-        str(player.get(
-            "clan_name",
-            "Clan necunoscut"
-        ))
+        str(
+            player.get(
+                "clan_name",
+                "Clan necunoscut"
+            )
+        )
     )
 
     clan_rank = player.get("clan_rank", 0)
@@ -394,7 +434,7 @@ def notify_join(player):
         f"<b>#{clan_rank}</b>"
     )
 
-    send_telegram(message)
+    return send_telegram(message)
 
 
 # =====================================
@@ -408,13 +448,15 @@ def notify_leave(player):
             player.get("name"),
             player.get("trophies")
         )
-        return
+        return False
 
     clan_name = html.escape(
-        str(player.get(
-            "clan_name",
-            "Clan necunoscut"
-        ))
+        str(
+            player.get(
+                "clan_name",
+                "Clan necunoscut"
+            )
+        )
     )
 
     clan_rank = player.get("clan_rank", 0)
@@ -428,7 +470,7 @@ def notify_leave(player):
         f"<b>#{clan_rank}</b>"
     )
 
-    send_telegram(message)
+    return send_telegram(message)
 
 
 # =====================================
@@ -440,13 +482,21 @@ def compare_players(previous, current):
     current_tags = set(current.keys())
 
     common_tags = previous_tags & current_tags
+    joined_tags = current_tags - previous_tags
+    left_tags = previous_tags - current_tags
 
     transfer_count = 0
     join_count = 0
     leave_count = 0
 
-    # Transferuri între clanurile din Top 100
-    for player_tag in common_tags:
+    sent_transfer_count = 0
+    sent_join_count = 0
+    sent_leave_count = 0
+
+    # Transferuri între clanurile din Top 100.
+    # Jucătorul există în ambele scanări,
+    # dar clanul s-a schimbat.
+    for player_tag in sorted(common_tags):
         old_player = previous[player_tag]
         new_player = current[player_tag]
 
@@ -456,40 +506,50 @@ def compare_players(previous, current):
         ):
             transfer_count += 1
 
-            notify_transfer(
+            if notify_transfer(
                 old_player,
                 new_player
-            )
+            ):
+                sent_transfer_count += 1
 
-            time.sleep(0.5)
+            time.sleep(0.30)
 
-    # Jucători nou apăruți în Top 100
-    joined_tags = current_tags - previous_tags
-
-    for player_tag in joined_tags:
+    # Intrări în clanurile monitorizate.
+    for player_tag in sorted(joined_tags):
         join_count += 1
 
-        notify_join(
-            current[player_tag]
-        )
+        if notify_join(current[player_tag]):
+            sent_join_count += 1
 
-        time.sleep(0.5)
+        time.sleep(0.30)
 
-    # Jucători dispăruți din Top 100
-    left_tags = previous_tags - current_tags
-
-    for player_tag in left_tags:
+    # Ieșiri din clanurile monitorizate.
+    for player_tag in sorted(left_tags):
         leave_count += 1
 
-        notify_leave(
-            previous[player_tag]
-        )
+        if notify_leave(previous[player_tag]):
+            sent_leave_count += 1
 
-        time.sleep(0.5)
+        time.sleep(0.30)
 
     print("Transferuri detectate:", transfer_count)
     print("Intrări detectate:", join_count)
     print("Ieșiri detectate:", leave_count)
+
+    print(
+        "Notificări transfer trimise:",
+        sent_transfer_count
+    )
+
+    print(
+        "Notificări intrare trimise:",
+        sent_join_count
+    )
+
+    print(
+        "Notificări ieșire trimise:",
+        sent_leave_count
+    )
 
 
 # =====================================
@@ -498,12 +558,14 @@ def compare_players(previous, current):
 
 def run_check():
     print("\n=========================")
+
     print(
         "Verificare:",
         datetime.now().strftime(
             "%d.%m.%Y %H:%M:%S"
         )
     )
+
     print("=========================")
 
     current_players = scan_players()
@@ -514,7 +576,8 @@ def run_check():
 
     previous_players = load_previous_players()
 
-    # Prima pornire salvează lista fără notificări.
+    # Prima pornire salvează lista fără
+    # notificări despre jucători.
     if (
         previous_players is None
         or len(previous_players) == 0
@@ -530,10 +593,10 @@ def run_check():
             f"<b>{len(current_players)}</b>\n"
             f"🏆 Prag notificări: "
             f"<b>peste {MIN_TROPHIES} trofee</b>\n"
-            "⏱ Verificare: "
-            "<b>la fiecare minut</b>\n\n"
+            "⏱ Pauză între scanări: "
+            f"<b>{CHECK_INTERVAL} secunde</b>\n\n"
             "Prima scanare nu generează "
-            "notificări."
+            "notificări despre jucători."
         )
 
         return
@@ -581,12 +644,14 @@ if __name__ == "__main__":
         raise SystemExit(1)
 
     print("StarAllianceBot a pornit.")
+
     print(
         "Prag notificări:",
         MIN_TROPHIES
     )
+
     print(
-        "Interval verificare:",
+        "Pauză între scanări:",
         CHECK_INTERVAL,
         "secunde"
     )
@@ -602,7 +667,7 @@ if __name__ == "__main__":
             )
 
         print(
-            f"Următoarea verificare în "
+            f"Următoarea verificare începe în "
             f"{CHECK_INTERVAL} secunde."
         )
 
