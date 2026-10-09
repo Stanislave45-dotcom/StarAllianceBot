@@ -37,7 +37,8 @@ message = "🇲🇩 TOP 10 CLANURI MOLDOVA\n\n"
 for clan in top_10:
     rank = clan["rank"]
     name = clan["name"]
-    members = clan["memberCount"]
+    members = clan.get("members", 0)
+
 
     message += f"#{rank} {name} ({members}/50)\n"
 
