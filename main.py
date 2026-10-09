@@ -30,11 +30,17 @@ if response.status_code == 200:
     data = response.json()
     clans = data.get("items", [])
 
-    message = (
-        "✅ Conexiunea Clash Royale funcționează!\n\n"
-        f"🇲🇩 Clanuri Moldova găsite: {len(clans)}\n"
-        "🤖 StarAllianceBot este pregătit."
-    )
+    top_10 = clans[:10]
+
+message = "🇲🇩 TOP 10 CLANURI MOLDOVA\n\n"
+
+for clan in top_10:
+    rank = clan["rank"]
+    name = clan["name"]
+    members = clan["memberCount"]
+
+    message += f"#{rank} {name} ({members}/50)\n"
+
 else:
     message = (
         "❌ Eroare Clash Royale API\n\n"
