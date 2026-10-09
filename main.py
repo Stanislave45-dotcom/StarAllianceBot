@@ -24,7 +24,6 @@ response = requests.get(
 )
 
 print("Clash Royale status:", response.status_code)
-print(response.text[:500])
 
 if response.status_code == 200:
     data = response.json()
@@ -32,21 +31,20 @@ if response.status_code == 200:
 
     top_10 = clans[:10]
 
-message = "🇲🇩 TOP 10 CLANURI MOLDOVA\n\n"
+    message = "🇲🇩 TOP 10 CLANURI MOLDOVA\n\n"
 
-for clan in top_10:
-    rank = clan["rank"]
-    name = clan["name"]
-    members = clan.get("members", 0)
+    for clan in top_10:
+        rank = clan["rank"]
+        name = clan["name"]
+        members = clan.get("members", 0)
 
-
-    message += f"#{rank} {name} ({members}/50)\n"
+        message += f"#{rank} {name} ({members}/50)\n"
 
 else:
     message = (
         "❌ Eroare Clash Royale API\n\n"
         f"Cod eroare: {response.status_code}\n"
-        "Verifică CR_API_TOKEN și IP-ul cheii."
+        "Verifică CR_API_TOKEN."
     )
 
 telegram_url = (
