@@ -1,19 +1,60 @@
 import os
 import requests
 
-TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+CR_API_TOKEN = os.getenv("CR_API_TOKEN")
 
-url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+MOLDOVA_LOCATION_ID = 57000039
+API_BASE = "https://proxy.royaleapi.dev/v1"
 
-response = requests.post(
-    url,
+headers = {
+    "Authorization": f"Bearer {CR_API_TOKEN}"
+}
+
+ranking_url = (
+    f"{API_BASE}/locations/"
+    f"{MOLDOVA_LOCATION_ID}/rankings/clans?limit=100"
+)
+
+response = requests.get(
+    ranking_url,
+    headers=headers,
+    timeout=30
+)
+
+print("Clash Royale status:", response.status_code)
+print(response.text[:500])
+
+if response.status_code == 200:
+    data = response.json()
+    clans = data.get("items", [])
+
+    message = (
+        "✅ Conexiunea Clash Royale funcționează!\n\n"
+        f"🇲🇩 Clanuri Moldova găsite: {len(clans)}\n"
+        "🤖 StarAllianceBot este pregătit."
+    )
+else:
+    message = (
+        "❌ Eroare Clash Royale API\n\n"
+        f"Cod eroare: {response.status_code}\n"
+        "Verifică CR_API_TOKEN și IP-ul cheii."
+    )
+
+telegram_url = (
+    f"https://api.telegram.org/"
+    f"bot{BOT_TOKEN}/sendMessage"
+)
+
+telegram_response = requests.post(
+    telegram_url,
     json={
         "chat_id": CHAT_ID,
-        "text": "✅ StarAllianceBot este online!"
+        "text": message
     },
     timeout=20
 )
 
-print(response.status_code)
-print(response.text)
+print("Telegram status:", telegram_response.status_code)
+print(telegram_response.text)
