@@ -24,13 +24,13 @@ CR_API_TOKEN = os.getenv("CR_API_TOKEN")
 MOLDOVA_LOCATION_ID = 57000155
 API_BASE = "https://proxy.royaleapi.dev/v1"
 
-# O nouă verificare începe la 60 de secunde
-# după terminarea scanării precedente.
+# Pauză după terminarea unei scanări
 CHECK_INTERVAL = 60
 
-# Notificări numai pentru 9001+ trofee.
+# Notificări numai pentru 9001+ trofee
 MIN_TROPHIES = 9000
 
+# Fișierul în care se păstrează ultima stare
 STATE_FILE = "players.json"
 
 HEADERS = {
@@ -39,24 +39,57 @@ HEADERS = {
 
 
 # =====================================
+# PROFIL ROYALEAPI
+# =====================================
+
+def get_profile_url(player_tag):
+    tag_without_hash = (
+        str(player_tag)
+        .replace("#", "")
+        .upper()
+    )
+
+    return (
+        "https://royaleapi.com/player/"
+        + tag_without_hash
+    )
+
+
+# =====================================
 # TRIMITERE MESAJ TELEGRAM
 # =====================================
 
-def send_telegram(message):
+def send_telegram(message, player_tag=None):
     telegram_url = (
-        f"https://api.telegram.org/"
-        f"bot{BOT_TOKEN}/sendMessage"
+        "https://api.telegram.org/bot"
+        + str(BOT_TOKEN)
+        + "/sendMessage"
     )
+
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+
+    # Adaugă buton către profilul jucătorului
+    if player_tag:
+        payload["reply_markup"] = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "👤 Vezi profilul pe RoyaleAPI",
+                        "url": get_profile_url(player_tag)
+                    }
+                ]
+            ]
+        }
 
     try:
         response = requests.post(
             telegram_url,
-            json={
-                "chat_id": CHAT_ID,
-                "text": message,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True
-            },
+            json=payload,
             timeout=30
         )
 
@@ -88,7 +121,7 @@ def get_top_clans():
     url = (
         f"{API_BASE}/locations/"
         f"{MOLDOVA_LOCATION_ID}/rankings/clans"
-        f"?limit=100"
+        "?limit=100"
     )
 
     try:
@@ -120,7 +153,10 @@ def get_top_clans():
 # =====================================
 
 def get_clan_members(clan_tag):
-    encoded_tag = quote(clan_tag, safe="")
+    encoded_tag = quote(
+        clan_tag,
+        safe=""
+    )
 
     url = f"{API_BASE}/clans/{encoded_tag}"
 
@@ -136,7 +172,7 @@ def get_clan_members(clan_tag):
                 "Eroare clan:",
                 clan_tag,
                 response.status_code,
-                response.text[:200]
+                response.text[:300]
             )
             return None
 
@@ -174,18 +210,26 @@ def scan_players():
             "Clan necunoscut"
         )
 
-        clan_rank = clan.get("rank", 0)
+        clan_rank = clan.get(
+            "rank",
+            0
+        )
 
         if not clan_tag:
             continue
 
-        clan_data = get_clan_members(clan_tag)
+        clan_data = get_clan_members(
+            clan_tag
+        )
 
         if clan_data is None:
             failed_clans += 1
             continue
 
-        members = clan_data.get("memberList", [])
+        members = clan_data.get(
+            "memberList",
+            []
+        )
 
         for member in members:
             player_tag = member.get("tag")
@@ -212,15 +256,21 @@ def scan_players():
                 "clan_rank": clan_rank
             }
 
-        # Pauză mică între cererile API.
+        # Pauză mică între cererile API
         time.sleep(0.10)
 
-    print("Jucători găsiți:", len(current_players))
-    print("Clanuri cu eroare:", failed_clans)
+    print(
+        "Jucători găsiți:",
+        len(current_players)
+    )
 
-    # Dacă un clan nu poate fi citit,
-    # comparația este anulată pentru a evita
-    # notificările false de ieșire.
+    print(
+        "Clanuri cu eroare:",
+        failed_clans
+    )
+
+    # Dacă nu am putut citi toate clanurile,
+    # anulăm comparația pentru a evita alerte false
     if failed_clans > 0:
         print(
             "Scanarea este incompletă. "
@@ -232,7 +282,7 @@ def scan_players():
 
 
 # =====================================
-# CITIRE SI SALVARE STARE
+# CITIRE STARE
 # =====================================
 
 def load_previous_players():
@@ -260,10 +310,16 @@ def load_previous_players():
         return None
 
 
-def save_players(players):
-    try:
-        temporary_file = f"{STATE_FILE}.tmp"
+# =====================================
+# SALVARE STARE
+# =====================================
 
+def save_players(players):
+    temporary_file = (
+        STATE_FILE + ".tmp"
+    )
+
+    try:
         with open(
             temporary_file,
             "w",
@@ -282,26 +338,11 @@ def save_players(players):
         )
 
         print("Starea a fost salvată.")
+        return True
 
     except OSError as error:
         print("Eroare salvare stare:", error)
-
-
-# =====================================
-# PROFIL ROYALEAPI
-# =====================================
-
-def get_profile_url(player_tag):
-    tag_without_hash = (
-        str(player_tag)
-        .replace("#", "")
-        .upper()
-    )
-
-    return (
-        f"https://royaleapi.com/player/"
-        f"{tag_without_hash}"
-    )
+        return False
 
 
 # =====================================
@@ -318,23 +359,23 @@ def player_line(player):
         )
     )
 
-    player_tag = str(
-        player.get("tag", "")
+    player_tag = html.escape(
+        str(
+            player.get(
+                "tag",
+                ""
+            )
+        )
     )
 
-    safe_tag = html.escape(player_tag)
-
-    profile_url = html.escape(
-        get_profile_url(player_tag),
-        quote=True
+    trophies = player.get(
+        "trophies",
+        0
     )
-
-    trophies = player.get("trophies", 0)
 
     return (
-        f'👤 {profile_url}'
-        f"<b>{player_name}</b></a>\n"
-        f"🏷 {safe_tag}\n"
+        f"👤 <b>{player_name}</b>\n"
+        f"🏷 {player_tag}\n"
         f"🏆 {trophies} trofee"
     )
 
@@ -346,13 +387,16 @@ def player_line(player):
 def has_enough_trophies(player):
     try:
         trophies = int(
-            player.get("trophies", 0)
+            player.get(
+                "trophies",
+                0
+            )
         )
 
     except (TypeError, ValueError):
         trophies = 0
 
-    # Peste 9000 înseamnă 9001 sau mai mult.
+    # "Peste 9000" înseamnă minimum 9001
     return trophies > MIN_TROPHIES
 
 
@@ -387,8 +431,15 @@ def notify_transfer(old_player, new_player):
         )
     )
 
-    old_rank = old_player.get("clan_rank", 0)
-    new_rank = new_player.get("clan_rank", 0)
+    old_rank = old_player.get(
+        "clan_rank",
+        0
+    )
+
+    new_rank = new_player.get(
+        "clan_rank",
+        0
+    )
 
     message = (
         "🔄 <b>TRANSFER DETECTAT</b>\n\n"
@@ -399,7 +450,10 @@ def notify_transfer(old_player, new_player):
         f"(#{new_rank})"
     )
 
-    return send_telegram(message)
+    return send_telegram(
+        message,
+        new_player.get("tag")
+    )
 
 
 # =====================================
@@ -424,7 +478,10 @@ def notify_join(player):
         )
     )
 
-    clan_rank = player.get("clan_rank", 0)
+    clan_rank = player.get(
+        "clan_rank",
+        0
+    )
 
     message = (
         "✅ <b>JUCĂTOR INTRAT</b>\n\n"
@@ -434,7 +491,10 @@ def notify_join(player):
         f"<b>#{clan_rank}</b>"
     )
 
-    return send_telegram(message)
+    return send_telegram(
+        message,
+        player.get("tag")
+    )
 
 
 # =====================================
@@ -459,7 +519,10 @@ def notify_leave(player):
         )
     )
 
-    clan_rank = player.get("clan_rank", 0)
+    clan_rank = player.get(
+        "clan_rank",
+        0
+    )
 
     message = (
         "🚪 <b>JUCĂTOR IEȘIT</b>\n\n"
@@ -470,7 +533,10 @@ def notify_leave(player):
         f"<b>#{clan_rank}</b>"
     )
 
-    return send_telegram(message)
+    return send_telegram(
+        message,
+        player.get("tag")
+    )
 
 
 # =====================================
@@ -478,12 +544,28 @@ def notify_leave(player):
 # =====================================
 
 def compare_players(previous, current):
-    previous_tags = set(previous.keys())
-    current_tags = set(current.keys())
+    previous_tags = set(
+        previous.keys()
+    )
 
-    common_tags = previous_tags & current_tags
-    joined_tags = current_tags - previous_tags
-    left_tags = previous_tags - current_tags
+    current_tags = set(
+        current.keys()
+    )
+
+    common_tags = (
+        previous_tags
+        & current_tags
+    )
+
+    joined_tags = (
+        current_tags
+        - previous_tags
+    )
+
+    left_tags = (
+        previous_tags
+        - current_tags
+    )
 
     transfer_count = 0
     join_count = 0
@@ -493,9 +575,7 @@ def compare_players(previous, current):
     sent_join_count = 0
     sent_leave_count = 0
 
-    # Transferuri între clanurile din Top 100.
-    # Jucătorul există în ambele scanări,
-    # dar clanul s-a schimbat.
+    # Transferuri între clanuri monitorizate
     for player_tag in sorted(common_tags):
         old_player = previous[player_tag]
         new_player = current[player_tag]
@@ -514,27 +594,42 @@ def compare_players(previous, current):
 
             time.sleep(0.30)
 
-    # Intrări în clanurile monitorizate.
+    # Intrări
     for player_tag in sorted(joined_tags):
         join_count += 1
 
-        if notify_join(current[player_tag]):
+        if notify_join(
+            current[player_tag]
+        ):
             sent_join_count += 1
 
         time.sleep(0.30)
 
-    # Ieșiri din clanurile monitorizate.
+    # Ieșiri
     for player_tag in sorted(left_tags):
         leave_count += 1
 
-        if notify_leave(previous[player_tag]):
+        if notify_leave(
+            previous[player_tag]
+        ):
             sent_leave_count += 1
 
         time.sleep(0.30)
 
-    print("Transferuri detectate:", transfer_count)
-    print("Intrări detectate:", join_count)
-    print("Ieșiri detectate:", leave_count)
+    print(
+        "Transferuri detectate:",
+        transfer_count
+    )
+
+    print(
+        "Intrări detectate:",
+        join_count
+    )
+
+    print(
+        "Ieșiri detectate:",
+        leave_count
+    )
 
     print(
         "Notificări transfer trimise:",
@@ -574,10 +669,12 @@ def run_check():
         print("Verificarea a fost anulată.")
         return
 
-    previous_players = load_previous_players()
+    previous_players = (
+        load_previous_players()
+    )
 
-    # Prima pornire salvează lista fără
-    # notificări despre jucători.
+    # Prima scanare salvează lista,
+    # fără notificări despre jucători
     if (
         previous_players is None
         or len(previous_players) == 0
@@ -593,7 +690,7 @@ def run_check():
             f"<b>{len(current_players)}</b>\n"
             f"🏆 Prag notificări: "
             f"<b>peste {MIN_TROPHIES} trofee</b>\n"
-            "⏱ Pauză între scanări: "
+            f"⏱ Pauză între scanări: "
             f"<b>{CHECK_INTERVAL} secunde</b>\n\n"
             "Prima scanare nu generează "
             "notificări despre jucători."
@@ -667,7 +764,7 @@ if __name__ == "__main__":
             )
 
         print(
-            f"Următoarea verificare începe în "
+            "Următoarea verificare începe în "
             f"{CHECK_INTERVAL} secunde."
         )
 
