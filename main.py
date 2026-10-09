@@ -30,7 +30,7 @@ if response.status_code == 200:
             )
             break
 
-telegram_url = f"https://api.telegram.org/bot{BOT\_TOKEN}/sendMessage"
+telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 requests.post(
     telegram_url,
