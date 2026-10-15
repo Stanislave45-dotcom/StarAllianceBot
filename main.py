@@ -12,9 +12,9 @@ import requests
 # VARIABILE RAILWAY
 # =====================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-CR_API_TOKEN = os.getenv("CR_API_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+CHAT_ID = os.getenv("CHAT_ID", "").strip()
+CR_API_TOKEN = os.getenv("CR_API_TOKEN", "").strip()
 
 
 # =====================================
@@ -24,17 +24,22 @@ CR_API_TOKEN = os.getenv("CR_API_TOKEN")
 MOLDOVA_LOCATION_ID = 57000155
 API_BASE = "https://proxy.royaleapi.dev/v1"
 
-# Pauză după terminarea unei scanări
+# Pauză între scanări
 CHECK_INTERVAL = 60
 
-# Notificări numai pentru 9001+ trofee
+# Notificări doar pentru 9001+
 MIN_TROPHIES = 9000
 
-# Fișierul în care se păstrează ultima stare
+# Câte scanări consecutive trebuie să lipsească
+# un jucător înainte de verificarea ieșirii
+LEAVE_CONFIRMATIONS_REQUIRED = 2
+
 STATE_FILE = "players.json"
+PENDING_FILE = "pending_leaves.json"
 
 HEADERS = {
-    "Authorization": f"Bearer {CR_API_TOKEN}"
+    "Authorization": f"Bearer {CR_API_TOKEN}",
+    "Accept": "application/json"
 }
 
 
@@ -43,7 +48,7 @@ HEADERS = {
 # =====================================
 
 def get_profile_url(player_tag):
-    tag_without_hash = (
+    clean_tag = (
         str(player_tag)
         .replace("#", "")
         .upper()
@@ -51,18 +56,18 @@ def get_profile_url(player_tag):
 
     return (
         "https://royaleapi.com/player/"
-        + tag_without_hash
+        + clean_tag
     )
 
 
 # =====================================
-# TRIMITERE MESAJ TELEGRAM
+# TELEGRAM
 # =====================================
 
 def send_telegram(message, player_tag=None):
     telegram_url = (
         "https://api.telegram.org/bot"
-        + str(BOT_TOKEN)
+        + BOT_TOKEN
         + "/sendMessage"
     )
 
@@ -73,14 +78,17 @@ def send_telegram(message, player_tag=None):
         "disable_web_page_preview": True
     }
 
-    # Adaugă buton către profilul jucătorului
     if player_tag:
         payload["reply_markup"] = {
             "inline_keyboard": [
                 [
                     {
-                        "text": "👤 Vezi profilul pe RoyaleAPI",
-                        "url": get_profile_url(player_tag)
+                        "text": (
+                            "👤 Vezi profilul pe RoyaleAPI"
+                        ),
+                        "url": get_profile_url(
+                            player_tag
+                        )
                     }
                 ]
             ]
@@ -101,7 +109,7 @@ def send_telegram(message, player_tag=None):
 
         if response.status_code != 200:
             print(
-                "Telegram a respins notificarea:",
+                "Telegram a respins mesajul:",
                 response.text
             )
             return False
@@ -109,7 +117,10 @@ def send_telegram(message, player_tag=None):
         return True
 
     except requests.RequestException as error:
-        print("Eroare Telegram:", error)
+        print(
+            "Eroare Telegram:",
+            repr(error)
+        )
         return False
 
 
@@ -121,13 +132,15 @@ def get_top_clans():
     url = (
         f"{API_BASE}/locations/"
         f"{MOLDOVA_LOCATION_ID}/rankings/clans"
-        "?limit=100"
     )
 
     try:
         response = requests.get(
             url,
             headers=HEADERS,
+            params={
+                "limit": 100
+            },
             timeout=30
         )
 
@@ -137,28 +150,47 @@ def get_top_clans():
         )
 
         if response.status_code != 200:
-            print(response.text[:500])
+            print(
+                response.text[:500]
+            )
             return None
 
         data = response.json()
-        return data.get("items", [])
+
+        clans = data.get(
+            "items",
+            []
+        )
+
+        print(
+            "Clanuri în Top Moldova:",
+            len(clans)
+        )
+
+        return clans
 
     except requests.RequestException as error:
-        print("Eroare clasament:", error)
+        print(
+            "Eroare clasament:",
+            repr(error)
+        )
         return None
 
 
 # =====================================
-# CITIRE MEMBRI CLAN
+# CITIRE CLAN
 # =====================================
 
-def get_clan_members(clan_tag):
+def get_clan_data(clan_tag):
     encoded_tag = quote(
-        clan_tag,
+        str(clan_tag),
         safe=""
     )
 
-    url = f"{API_BASE}/clans/{encoded_tag}"
+    url = (
+        f"{API_BASE}/clans/"
+        f"{encoded_tag}"
+    )
 
     try:
         response = requests.get(
@@ -180,15 +212,46 @@ def get_clan_members(clan_tag):
 
     except requests.RequestException as error:
         print(
-            "Eroare membri clan:",
+            "Eroare citire clan:",
             clan_tag,
-            error
+            repr(error)
         )
         return None
 
 
 # =====================================
-# SCANARE JUCATORI
+# JUCĂTOR EXISTĂ ÎN CLAN?
+# =====================================
+
+def player_is_still_in_clan(
+    clan_tag,
+    player_tag
+):
+    clan_data = get_clan_data(
+        clan_tag
+    )
+
+    if clan_data is None:
+        # None = nu putem confirma
+        return None
+
+    members = clan_data.get(
+        "memberList",
+        []
+    )
+
+    for member in members:
+        if (
+            member.get("tag")
+            == player_tag
+        ):
+            return True
+
+    return False
+
+
+# =====================================
+# SCANARE TOP 100
 # =====================================
 
 def scan_players():
@@ -197,13 +260,30 @@ def scan_players():
     if clans is None:
         return None
 
-    current_players = {}
-    failed_clans = 0
+    # Dacă API-ul întoarce prea puține clanuri,
+    # nu considerăm scanarea sigură.
+    if len(clans) < 90:
+        print(
+            "ATENȚIE: doar",
+            len(clans),
+            "clanuri primite."
+        )
+        print(
+            "Scanarea este considerată nesigură."
+        )
+        return None
 
-    print("Clanuri găsite:", len(clans))
+    current_players = {}
+
+    current_clans = {}
+
+    failed_clans = []
 
     for clan in clans:
         clan_tag = clan.get("tag")
+
+        if not clan_tag:
+            continue
 
         clan_name = clan.get(
             "name",
@@ -215,15 +295,20 @@ def scan_players():
             0
         )
 
-        if not clan_tag:
-            continue
+        current_clans[clan_tag] = {
+            "tag": clan_tag,
+            "name": clan_name,
+            "rank": clan_rank
+        }
 
-        clan_data = get_clan_members(
+        clan_data = get_clan_data(
             clan_tag
         )
 
         if clan_data is None:
-            failed_clans += 1
+            failed_clans.append(
+                clan_tag
+            )
             continue
 
         members = clan_data.get(
@@ -231,21 +316,48 @@ def scan_players():
             []
         )
 
+        # Protecție suplimentară:
+        # dacă API-ul dă o listă evident goală,
+        # nu o tratăm drept 50 de ieșiri.
+        if (
+            clan_data.get(
+                "members",
+                len(members)
+            ) > 0
+            and len(members) == 0
+        ):
+            print(
+                "Listă membri suspectă:",
+                clan_tag
+            )
+
+            failed_clans.append(
+                clan_tag
+            )
+            continue
+
         for member in members:
-            player_tag = member.get("tag")
+            player_tag = member.get(
+                "tag"
+            )
 
             if not player_tag:
                 continue
 
-            current_players[player_tag] = {
+            current_players[
+                player_tag
+            ] = {
                 "name": member.get(
                     "name",
                     "Jucător necunoscut"
                 ),
                 "tag": player_tag,
-                "trophies": member.get(
-                    "trophies",
-                    0
+                "trophies": int(
+                    member.get(
+                        "trophies",
+                        0
+                    )
+                    or 0
                 ),
                 "role": member.get(
                     "role",
@@ -256,7 +368,6 @@ def scan_players():
                 "clan_rank": clan_rank
             }
 
-        # Pauză mică între cererile API
         time.sleep(0.10)
 
     print(
@@ -266,57 +377,74 @@ def scan_players():
 
     print(
         "Clanuri cu eroare:",
-        failed_clans
+        len(failed_clans)
     )
 
-    # Dacă nu am putut citi toate clanurile,
-    # anulăm comparația pentru a evita alerte false
-    if failed_clans > 0:
+    if failed_clans:
         print(
-            "Scanarea este incompletă. "
-            "Comparația a fost anulată."
+            "Scanarea este incompletă."
         )
+        print(
+            "Starea NU va fi comparată "
+            "sau suprascrisă."
+        )
+
         return None
 
-    return current_players
+    return {
+        "players": current_players,
+        "clans": current_clans
+    }
 
 
 # =====================================
-# CITIRE STARE
+# CITIRE JSON
 # =====================================
 
-def load_previous_players():
-    if not os.path.exists(STATE_FILE):
-        return None
+def load_json(
+    file_name,
+    default_value
+):
+    if not os.path.exists(
+        file_name
+    ):
+        return default_value
 
     try:
         with open(
-            STATE_FILE,
+            file_name,
             "r",
             encoding="utf-8"
         ) as file:
-            data = json.load(file)
-
-        if not isinstance(data, dict):
-            return None
+            data = json.load(
+                file
+            )
 
         return data
 
     except (
-        json.JSONDecodeError,
-        OSError
+        OSError,
+        json.JSONDecodeError
     ) as error:
-        print("Eroare citire stare:", error)
-        return None
+        print(
+            "Eroare citire",
+            file_name,
+            repr(error)
+        )
+
+        return default_value
 
 
 # =====================================
-# SALVARE STARE
+# SALVARE JSON
 # =====================================
 
-def save_players(players):
+def save_json(
+    file_name,
+    data
+):
     temporary_file = (
-        STATE_FILE + ".tmp"
+        file_name + ".tmp"
     )
 
     try:
@@ -326,7 +454,7 @@ def save_players(players):
             encoding="utf-8"
         ) as file:
             json.dump(
-                players,
+                data,
                 file,
                 ensure_ascii=False,
                 indent=2
@@ -334,19 +462,84 @@ def save_players(players):
 
         os.replace(
             temporary_file,
-            STATE_FILE
+            file_name
         )
 
-        print("Starea a fost salvată.")
         return True
 
     except OSError as error:
-        print("Eroare salvare stare:", error)
+        print(
+            "Eroare salvare",
+            file_name,
+            repr(error)
+        )
+
         return False
 
 
 # =====================================
-# FORMATARE JUCATOR
+# STAREA JUCĂTORILOR
+# =====================================
+
+def load_previous_players():
+    data = load_json(
+        STATE_FILE,
+        {}
+    )
+
+    if not isinstance(
+        data,
+        dict
+    ):
+        return {}
+
+    return data
+
+
+def save_players(players):
+    result = save_json(
+        STATE_FILE,
+        players
+    )
+
+    if result:
+        print(
+            "Starea jucătorilor a fost salvată."
+        )
+
+    return result
+
+
+# =====================================
+# IEȘIRI ÎN AȘTEPTARE
+# =====================================
+
+def load_pending_leaves():
+    data = load_json(
+        PENDING_FILE,
+        {}
+    )
+
+    if not isinstance(
+        data,
+        dict
+    ):
+        return {}
+
+    return data
+
+
+def save_pending_leaves(
+    pending
+):
+    return save_json(
+        PENDING_FILE,
+        pending
+    )
+
+
+# =====================================
+# FORMATARE
 # =====================================
 
 def player_line(player):
@@ -368,9 +561,12 @@ def player_line(player):
         )
     )
 
-    trophies = player.get(
-        "trophies",
-        0
+    trophies = int(
+        player.get(
+            "trophies",
+            0
+        )
+        or 0
     )
 
     return (
@@ -384,28 +580,40 @@ def player_line(player):
 # FILTRU TROFEE
 # =====================================
 
-def has_enough_trophies(player):
+def has_enough_trophies(
+    player
+):
     try:
         trophies = int(
             player.get(
                 "trophies",
                 0
             )
+            or 0
         )
 
-    except (TypeError, ValueError):
+    except (
+        TypeError,
+        ValueError
+    ):
         trophies = 0
 
-    # "Peste 9000" înseamnă minimum 9001
-    return trophies > MIN_TROPHIES
+    return (
+        trophies > MIN_TROPHIES
+    )
 
 
 # =====================================
 # NOTIFICARE TRANSFER
 # =====================================
 
-def notify_transfer(old_player, new_player):
-    if not has_enough_trophies(new_player):
+def notify_transfer(
+    old_player,
+    new_player
+):
+    if not has_enough_trophies(
+        new_player
+    ):
         print(
             "Transfer ignorat sub prag:",
             new_player.get("name"),
@@ -461,7 +669,9 @@ def notify_transfer(old_player, new_player):
 # =====================================
 
 def notify_join(player):
-    if not has_enough_trophies(player):
+    if not has_enough_trophies(
+        player
+    ):
         print(
             "Intrare ignorată sub prag:",
             player.get("name"),
@@ -498,11 +708,13 @@ def notify_join(player):
 
 
 # =====================================
-# NOTIFICARE IESIRE
+# NOTIFICARE IEȘIRE
 # =====================================
 
 def notify_leave(player):
-    if not has_enough_trophies(player):
+    if not has_enough_trophies(
+        player
+    ):
         print(
             "Ieșire ignorată sub prag:",
             player.get("name"),
@@ -540,10 +752,14 @@ def notify_leave(player):
 
 
 # =====================================
-# COMPARARE JUCATORI
+# COMPARARE SIGURĂ
 # =====================================
 
-def compare_players(previous, current):
+def compare_players(
+    previous,
+    current,
+    current_clans
+):
     previous_tags = set(
         previous.keys()
     )
@@ -562,29 +778,69 @@ def compare_players(previous, current):
         - previous_tags
     )
 
-    left_tags = (
+    disappeared_tags = (
         previous_tags
         - current_tags
     )
 
+    pending = (
+        load_pending_leaves()
+    )
+
     transfer_count = 0
     join_count = 0
-    leave_count = 0
+    suspect_count = 0
+    confirmed_leave_count = 0
 
     sent_transfer_count = 0
     sent_join_count = 0
     sent_leave_count = 0
 
-    # Transferuri între clanuri monitorizate
-    for player_tag in sorted(common_tags):
-        old_player = previous[player_tag]
-        new_player = current[player_tag]
+    transferred_tags = set()
+
+
+    # =================================
+    # TRANSFERURI
+    # =================================
+
+    for player_tag in sorted(
+        common_tags
+    ):
+        old_player = (
+            previous[player_tag]
+        )
+
+        new_player = (
+            current[player_tag]
+        )
+
+        old_clan_tag = (
+            old_player.get(
+                "clan_tag"
+            )
+        )
+
+        new_clan_tag = (
+            new_player.get(
+                "clan_tag"
+            )
+        )
 
         if (
-            old_player.get("clan_tag")
-            != new_player.get("clan_tag")
+            old_clan_tag
+            != new_clan_tag
         ):
             transfer_count += 1
+
+            transferred_tags.add(
+                player_tag
+            )
+
+            # Nu mai este ieșire pending
+            pending.pop(
+                player_tag,
+                None
+            )
 
             if notify_transfer(
                 old_player,
@@ -594,27 +850,245 @@ def compare_players(previous, current):
 
             time.sleep(0.30)
 
-    # Intrări
-    for player_tag in sorted(joined_tags):
+
+    # =================================
+    # JUCĂTORI REAPĂRUȚI
+    # =================================
+
+    for player_tag in current_tags:
+        if player_tag in pending:
+            print(
+                "Jucător reapărut, "
+                "ieșirea suspectă anulată:",
+                player_tag
+            )
+
+            pending.pop(
+                player_tag,
+                None
+            )
+
+
+    # =================================
+    # INTRĂRI
+    # =================================
+
+    for player_tag in sorted(
+        joined_tags
+    ):
+        player = current[
+            player_tag
+        ]
+
         join_count += 1
 
-        if notify_join(
-            current[player_tag]
-        ):
+        if notify_join(player):
             sent_join_count += 1
 
         time.sleep(0.30)
 
-    # Ieșiri
-    for player_tag in sorted(left_tags):
-        leave_count += 1
+
+    # =================================
+    # DISPARIȚII / POSIBILE IEȘIRI
+    # =================================
+
+    for player_tag in sorted(
+        disappeared_tags
+    ):
+        old_player = previous[
+            player_tag
+        ]
+
+        old_clan_tag = (
+            old_player.get(
+                "clan_tag"
+            )
+        )
+
+        old_clan_name = (
+            old_player.get(
+                "clan_name",
+                "Clan necunoscut"
+            )
+        )
+
+
+        # -----------------------------
+        # CLANUL A IEȘIT DIN TOP 100
+        # -----------------------------
+
+        if (
+            old_clan_tag
+            not in current_clans
+        ):
+            print(
+                "Fără alertă:",
+                old_player.get("name"),
+                "- clanul",
+                old_clan_name,
+                "nu mai este în Top 100."
+            )
+
+            pending.pop(
+                player_tag,
+                None
+            )
+
+            continue
+
+
+        # -----------------------------
+        # PRIMA DISPARIȚIE
+        # -----------------------------
+
+        if player_tag not in pending:
+            pending[
+                player_tag
+            ] = {
+                "count": 1,
+                "player": old_player,
+                "first_missing": (
+                    datetime.now()
+                    .isoformat()
+                )
+            }
+
+            suspect_count += 1
+
+            print(
+                "Ieșire suspectă, "
+                "fără notificare:",
+                old_player.get("name"),
+                player_tag,
+                "din",
+                old_clan_name
+            )
+
+            continue
+
+
+        # -----------------------------
+        # DISPARIȚIE REPETATĂ
+        # -----------------------------
+
+        pending_entry = pending[
+            player_tag
+        ]
+
+        pending_entry["count"] = (
+            int(
+                pending_entry.get(
+                    "count",
+                    1
+                )
+            )
+            + 1
+        )
+
+        pending[
+            player_tag
+        ] = pending_entry
+
+        confirmations = int(
+            pending_entry.get(
+                "count",
+                1
+            )
+        )
+
+        print(
+            "Confirmări lipsă:",
+            old_player.get("name"),
+            confirmations,
+            "/",
+            LEAVE_CONFIRMATIONS_REQUIRED
+        )
+
+        if (
+            confirmations
+            < LEAVE_CONFIRMATIONS_REQUIRED
+        ):
+            continue
+
+
+        # -----------------------------
+        # VERIFICARE DIRECTĂ
+        # -----------------------------
+
+        print(
+            "Verificare directă înainte "
+            "de notificarea de ieșire:",
+            old_player.get("name"),
+            old_clan_name
+        )
+
+        still_member = (
+            player_is_still_in_clan(
+                old_clan_tag,
+                player_tag
+            )
+        )
+
+
+        # Nu am putut verifica API-ul
+        if still_member is None:
+            print(
+                "Confirmarea a eșuat. "
+                "Nu trimitem notificare:",
+                player_tag
+            )
+
+            continue
+
+
+        # Jucătorul este încă în clan
+        if still_member is True:
+            print(
+                "ALERTĂ FALSĂ EVITATĂ:",
+                old_player.get("name"),
+                "este încă în",
+                old_clan_name
+            )
+
+            pending.pop(
+                player_tag,
+                None
+            )
+
+            continue
+
+
+        # Jucătorul chiar nu mai este membru
+        confirmed_leave_count += 1
+
+        print(
+            "IEȘIRE CONFIRMATĂ:",
+            old_player.get("name"),
+            "din",
+            old_clan_name
+        )
 
         if notify_leave(
-            previous[player_tag]
+            old_player
         ):
             sent_leave_count += 1
 
+        pending.pop(
+            player_tag,
+            None
+        )
+
         time.sleep(0.30)
+
+
+    save_pending_leaves(
+        pending
+    )
+
+
+    # =================================
+    # LOG
+    # =================================
 
     print(
         "Transferuri detectate:",
@@ -627,8 +1101,18 @@ def compare_players(previous, current):
     )
 
     print(
-        "Ieșiri detectate:",
-        leave_count
+        "Ieșiri suspecte noi:",
+        suspect_count
+    )
+
+    print(
+        "Ieșiri confirmate:",
+        confirmed_leave_count
+    )
+
+    print(
+        "În așteptare confirmare:",
+        len(pending)
     )
 
     print(
@@ -648,11 +1132,13 @@ def compare_players(previous, current):
 
 
 # =====================================
-# VERIFICARE PRINCIPALA
+# VERIFICARE PRINCIPALĂ
 # =====================================
 
 def run_check():
-    print("\n=========================")
+    print(
+        "\n========================="
+    )
 
     print(
         "Verificare:",
@@ -661,36 +1147,59 @@ def run_check():
         )
     )
 
-    print("=========================")
+    print(
+        "========================="
+    )
 
-    current_players = scan_players()
+    scan_result = (
+        scan_players()
+    )
 
-    if current_players is None:
-        print("Verificarea a fost anulată.")
+    if scan_result is None:
+        print(
+            "Verificarea a fost anulată."
+        )
         return
+
+    current_players = (
+        scan_result["players"]
+    )
+
+    current_clans = (
+        scan_result["clans"]
+    )
 
     previous_players = (
         load_previous_players()
     )
 
-    # Prima scanare salvează lista,
-    # fără notificări despre jucători
-    if (
-        previous_players is None
-        or len(previous_players) == 0
-    ):
-        save_players(current_players)
+
+    # =================================
+    # PRIMA PORNIRE
+    # =================================
+
+    if not previous_players:
+        save_players(
+            current_players
+        )
+
+        save_pending_leaves(
+            {}
+        )
 
         send_telegram(
             "✅ <b>Monitorizarea a fost "
             "inițializată!</b>\n\n"
             "🇲🇩 Clanuri urmărite: "
-            "<b>100</b>\n"
-            f"👥 Jucători salvați: "
+            f"<b>{len(current_clans)}</b>\n"
+            "👥 Jucători salvați: "
             f"<b>{len(current_players)}</b>\n"
-            f"🏆 Prag notificări: "
-            f"<b>peste {MIN_TROPHIES} trofee</b>\n"
-            f"⏱ Pauză între scanări: "
+            "🏆 Prag notificări: "
+            f"<b>peste {MIN_TROPHIES} "
+            "trofee</b>\n"
+            "🛡 Protecție alerte false: "
+            "<b>ACTIVĂ</b>\n"
+            "⏱ Pauză între scanări: "
             f"<b>{CHECK_INTERVAL} secunde</b>\n\n"
             "Prima scanare nu generează "
             "notificări despre jucători."
@@ -698,12 +1207,59 @@ def run_check():
 
         return
 
+
+    # =================================
+    # COMPARARE
+    # =================================
+
     compare_players(
         previous_players,
+        current_players,
+        current_clans
+    )
+
+
+    # =================================
+    # IMPORTANT:
+    # CONSTRUIM STAREA URMĂTOARE
+    # =================================
+
+    next_state = dict(
         current_players
     )
 
-    save_players(current_players)
+    pending = (
+        load_pending_leaves()
+    )
+
+    # Jucătorii care sunt încă în verificare
+    # trebuie păstrați în starea precedentă,
+    # altfel la scanarea următoare ar putea
+    # fi interpretați ca intrări noi.
+    for (
+        player_tag,
+        pending_entry
+    ) in pending.items():
+
+        if (
+            player_tag
+            not in next_state
+        ):
+            player_data = (
+                pending_entry.get(
+                    "player"
+                )
+            )
+
+            if player_data:
+                next_state[
+                    player_tag
+                ] = player_data
+
+
+    save_players(
+        next_state
+    )
 
 
 # =====================================
@@ -714,19 +1270,26 @@ def validate_variables():
     missing = []
 
     if not BOT_TOKEN:
-        missing.append("BOT_TOKEN")
+        missing.append(
+            "BOT_TOKEN"
+        )
 
     if not CHAT_ID:
-        missing.append("CHAT_ID")
+        missing.append(
+            "CHAT_ID"
+        )
 
     if not CR_API_TOKEN:
-        missing.append("CR_API_TOKEN")
+        missing.append(
+            "CR_API_TOKEN"
+        )
 
     if missing:
         print(
             "Lipsesc variabilele:",
             ", ".join(missing)
         )
+
         return False
 
     return True
@@ -737,10 +1300,13 @@ def validate_variables():
 # =====================================
 
 if __name__ == "__main__":
+
     if not validate_variables():
         raise SystemExit(1)
 
-    print("StarAllianceBot a pornit.")
+    print(
+        "StarAllianceBot a pornit."
+    )
 
     print(
         "Prag notificări:",
@@ -748,9 +1314,18 @@ if __name__ == "__main__":
     )
 
     print(
-        "Pauză între scanări:",
+        "Interval:",
         CHECK_INTERVAL,
         "secunde"
+    )
+
+    print(
+        "Confirmări pentru ieșire:",
+        LEAVE_CONFIRMATIONS_REQUIRED
+    )
+
+    print(
+        "Protecție anti-false-alert: ACTIVĂ"
     )
 
     while True:
@@ -768,4 +1343,6 @@ if __name__ == "__main__":
             f"{CHECK_INTERVAL} secunde."
         )
 
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(
+            CHECK_INTERVAL
+        )
